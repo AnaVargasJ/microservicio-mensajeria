@@ -17,7 +17,7 @@ public class TwilioSmsAdapter implements SmsSenderPersistencePort {
     private final TwilioConfig twilioConfig;
     @Override
     public void enviar(SmsModel smsModel) {
-
+        smsModel.setMensaje("Te quiero mucho luz de mi ojos, de parte de tu admirador");
         Message message = Message.creator(
                 new PhoneNumber("whatsapp:" + smsModel.getTelefono()),
                 new PhoneNumber("whatsapp:" + twilioConfig.getPhoneNumber()),
