@@ -2,29 +2,37 @@ package com.avargas.devops.pruebas.app.microserviciomensajeria.infraestructure.o
 
 import com.avargas.devops.pruebas.app.microserviciomensajeria.domain.model.SmsModel;
 import com.avargas.devops.pruebas.app.microserviciomensajeria.domain.spi.SmsSenderPersistencePort;
-import com.avargas.devops.pruebas.app.microserviciomensajeria.infraestructure.out.client.config.TwilioConfig;
 import com.twilio.rest.api.v2010.account.Message;
-import com.twilio.type.PhoneNumber;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import com.twilio.Twilio;
+
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class TwilioSmsAdapter implements SmsSenderPersistencePort {
 
-    private final TwilioConfig twilioConfig;
+    @Value("${twilio.account-sid}")
+    private String accountSid ;
+
+    @Value("${twilio.auth-token}")
+    private String authToken ;
+
+    @Value("${twilio.phone-number}")
+    private String twilioNumber;
+
     @Override
     public void enviar(SmsModel smsModel) {
-        smsModel.setMensaje("Te quiero mucho luz de mi ojos, de parte de tu admirador");
+        Twilio.init(accountSid, authToken);
         Message message = Message.creator(
-                new PhoneNumber("whatsapp:" + smsModel.getTelefono()),
-                new PhoneNumber("whatsapp:" + twilioConfig.getPhoneNumber()),
-                smsModel.getMensaje()
-        ).create();
+                        new com.twilio.type.PhoneNumber(smsModel.getTelefono()),
+                        new com.twilio.type.PhoneNumber(twilioNumber),
+                        smsModel.getMensaje())
+                .create();
 
-        log.info("Mensaje enviado. SID: " + message.getSid());
-
+        log.info(message.getSid());
     }
 }

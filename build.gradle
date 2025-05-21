@@ -1,5 +1,6 @@
 plugins {
     id 'java'
+    id 'jacoco'
     id 'org.springframework.boot' version '3.4.5'
     id 'io.spring.dependency-management' version '1.1.7'
 }
@@ -34,8 +35,6 @@ dependencies {
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.3'
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.3'
     implementation 'com.auth0:java-jwt:4.4.0'
-
-    // Twilio SDK para WhatsApp
     implementation 'com.twilio.sdk:twilio:10.9.0'
 
     // Lombok
@@ -45,12 +44,59 @@ dependencies {
     // Dev tools
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
 
+    // OpenAPI
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.7.0'
+
     // Test
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+
+
 tasks.named('test') {
     useJUnitPlatform()
 }
+
+jacoco {
+    toolVersion = "0.8.11"
+}
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml.required = true
+        html.required = true
+    }
+
+
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect {
+            //incluye las clases del domain
+            fileTree(dir: it, include: ['**/domain/**'], exclude: [
+                    '**/domain/dto/**',
+                    '**/domain/config/**'
+            ])
+        }))
+    }
+}
+
+jacocoTestCoverageVerification {
+    dependsOn test
+    violationRules {
+        rule {
+            element = 'PACKAGE'
+            includes = ['com.avargas.devops.pruebas.app.microserviciomensajeria.domain']
+
+            limit {
+                counter = 'LINE'
+                value = 'COVEREDRATIO'
+                minimum = 0.90
+            }
+        }
+    }
+}
+
+check.dependsOn jacocoTestCoverageVerification
+

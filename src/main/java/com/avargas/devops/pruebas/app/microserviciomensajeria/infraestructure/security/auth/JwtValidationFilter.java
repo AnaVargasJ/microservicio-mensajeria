@@ -2,10 +2,12 @@ package com.avargas.devops.pruebas.app.microserviciomensajeria.infraestructure.s
 
 import com.auth0.jwt.JWT;
 import com.auth0.jwt.interfaces.DecodedJWT;
-import com.avargas.devops.pruebas.app.microserviciomensajeria.infraestructure.out.client.impl.GenericHttpClient;
+import com.avargas.devops.pruebas.app.microserviciomensajeria.application.dto.response.ResponseDTO;
+import com.avargas.devops.pruebas.app.microserviciomensajeria.infraestructure.out.client.IGenericHttpClient;
+import com.avargas.devops.pruebas.app.microserviciomensajeria.infraestructure.out.client.exception.TokenInvalidoException;
 import com.avargas.devops.pruebas.app.microserviciomensajeria.infraestructure.security.jwt.TokenJwtConfig;
+import com.avargas.devops.pruebas.app.microserviciomensajeria.infraestructure.security.model.UsuarioAutenticado;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -16,7 +18,6 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.GrantedAuthority;
@@ -25,151 +26,108 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.Collection;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
 
-@Profile("!test")
 @Slf4j
+@Profile("!test")
 public class JwtValidationFilter extends BasicAuthenticationFilter {
 
-    private final GenericHttpClient loginClient;
+    private static final String PATH_CONSULTAR_USUARIO = "/buscarPorCorreo/{correo}";
+    private static final String ROLE_PREFIX = "ROLE_";
+    private static final String FIELD_ID_USUARIO = "idUsuario";
+    private static final String FIELD_ROL = "rol";
+    private static final String FIELD_NOMBRE = "nombre";
+    private static final String FIELD_CODIGO = "codigo";
+    private static final String FIELD_RESPUESTA = "respuesta";
+    private static final int HTTP_OK = 200;
+    private static final String ERROR_TOKEN_VENCIDO = "El token ha vencido";
+    private static final String ERROR_TOKEN_INVALIDO = "Token inválido: ";
+    private static final String ERROR_CONSULTA_USUARIO = "Error al consultar el usuario con correo: ";
 
-    @Value("${default.password}")
-    private String password;
+    private final IGenericHttpClient loginClient;
 
-    @Value("${microservicioUsuarios}")
-    private String urlUsuarios;
+    @Value("${microserviciopropietarios}")
+    private String urlPropietarios;
 
-
-
-    public JwtValidationFilter(AuthenticationManager authenticationManager, GenericHttpClient loginClient) {
-        super(authenticationManager);
+    public JwtValidationFilter(AuthenticationManager authManager, IGenericHttpClient loginClient) {
+        super(authManager);
         this.loginClient = loginClient;
     }
+
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws IOException, ServletException {
-        Map<String, Object> body = new HashMap<>();
-        Map<String, Object> respuesta = new HashMap<>();
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+            throws IOException, ServletException {
+
+        String header = request.getHeader(TokenJwtConfig.HEADER_AUTHORIZATION);
+        if (header == null || !header.startsWith(TokenJwtConfig.PREFIX_TOKEN)) {
+            chain.doFilter(request, response);
+            return;
+        }
+
+        String token = header.replace(TokenJwtConfig.PREFIX_TOKEN, "");
         try {
-            String header = request.getHeader(TokenJwtConfig.HEADER_AUTHORIZATION);
-
-            if (header == null || !header.startsWith(TokenJwtConfig.PREFIX_TOKEN)) {
-                chain.doFilter(request, response);
-                return;
-            }
-
-            String token = header.replace(TokenJwtConfig.PREFIX_TOKEN, "");
             DecodedJWT decodedJWT = JWT.decode(token);
-            Date exp = decodedJWT.getExpiresAt();
-
-            if (isTokenExpired(exp)) {
-
-                body.put("error", "El token ha vencido");
-                body.put("mensaje", "El token JWT es incorrecto");
-                body.put("status", HttpStatus.UNAUTHORIZED.value());
-
-
-
-                response.getWriter().write(new ObjectMapper().writeValueAsString(body));
-                response.setStatus(HttpStatus.UNAUTHORIZED.value());
-                response.setContentType(TokenJwtConfig.CONTENT_TYPE);
+            if (isTokenExpired(decodedJWT.getExpiresAt())) {
+                reject(response, ERROR_TOKEN_VENCIDO, HttpStatus.UNAUTHORIZED);
                 return;
             }
 
-            String username = decodedJWT.getSubject();
-            log.info("Realizando login para el usuario: {}", username);
-            String loginUrl = this.urlUsuarios + "/login";
+            String correo = decodedJWT.getSubject();
+            Map<String, Object> usuario = consultarUsuarioPorCorreo(correo, header);
 
-            log.info("Realizando solicitud de login a la URL: {}", loginUrl);
-            log.info("Con username: {}, y password: {}", username);
+            Long id = Long.valueOf(usuario.get(FIELD_ID_USUARIO).toString());
+            String rol = ((Map<String, Object>) usuario.get(FIELD_ROL)).get(FIELD_NOMBRE).toString();
 
+            Collection<GrantedAuthority> authorities = List.of(new SimpleGrantedAuthority(ROLE_PREFIX + rol));
 
-            body.put("correo", username);
-            body.put("clave", password);
+            UsuarioAutenticado usuarioAutenticado = new UsuarioAutenticado(
+                    id,
+                    correo,
+                    null,
+                    authorities
+            );
 
-            Map<String, String> headers = Map.of(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
+            UsernamePasswordAuthenticationToken authenticationToken =
+                    new UsernamePasswordAuthenticationToken(usuarioAutenticado, null, authorities);
 
+            SecurityContextHolder.getContext().setAuthentication(authenticationToken);
+            chain.doFilter(request, response);
 
-
-            respuesta = loginClient.sendRequest(loginUrl, HttpMethod.POST, body, headers);
-
-            log.info("Respuesta del login: {}", respuesta);
-
-            if (respuesta != null && !respuesta.isEmpty()) {
-
-                Object statusCode = respuesta.get("codigo");
-                if (statusCode instanceof Integer && (Integer) statusCode == 200) {
-                    // Obtener roles del JWT
-                    String authoritiesJson = decodedJWT.getClaim("authorities").asString();
-                    Collection<GrantedAuthority> authorities = new ArrayList<>();
-
-                    if (authoritiesJson != null && !authoritiesJson.isEmpty()) {
-                        ObjectMapper objectMapper = new ObjectMapper();
-                        try {
-                            List<Map<String, String>> parsedAuthorities = objectMapper.readValue(authoritiesJson, List.class);
-                            for (Map<String, String> authorityMap : parsedAuthorities) {
-                                String role = authorityMap.get("authority");
-                                if (role != null) {
-                                    authorities.add(new SimpleGrantedAuthority( role));
-                                }
-                            }
-                        } catch (Exception ex) {
-                            log.error("Error al parsear los authorities del token JWT: {}", ex.getMessage());
-                        }
-                    }
-
-                    UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(username, null, authorities);
-                    SecurityContextHolder.getContext().setAuthentication(authenticationToken);
-                    chain.doFilter(request, response);
-                }
-                else {
-                    throw new RuntimeException("El token no está presente en la respuesta.");
-                }
-
-            } else {
-                log.error("Error en la validación del token, código de respuesta: {}", respuesta != null && !respuesta.isEmpty() ? respuesta.get("statusCode") : "null");
-
-
-                respuesta.put("error", "Error al validar el token");
-                respuesta.put("mensaje","El token JWT es incorrecto");
-                respuesta.put("statusCode",HttpStatus.UNAUTHORIZED.value());
-
-
-                response.getWriter().write(new ObjectMapper().writeValueAsString(respuesta));
-                response.setStatus(HttpStatus.UNAUTHORIZED.value());
-                response.setContentType(TokenJwtConfig.CONTENT_TYPE);
-            }
-
-        } catch (JwtException e) {
-            log.error("Error al procesar el token JWT: {}", e.getMessage());
-
-            respuesta.put("error", e.getMessage());
-            respuesta.put("mensaje", "El token JWT es incorrecto");
-            respuesta.put("statusCode",HttpStatus.UNAUTHORIZED.value());
-
-
-
-            response.getWriter().write(new ObjectMapper().writeValueAsString(respuesta));
-            response.setStatus(HttpStatus.UNAUTHORIZED.value());
-            response.setContentType(TokenJwtConfig.CONTENT_TYPE);
-        } catch (Exception e) {
-            log.error("Error inesperado al validar el token: {}", e.getMessage());
-
-            respuesta.put("error", "Error al realizar la autenticación: " + e.getMessage());
-            respuesta.put("mensaje", "Error al validar el token");
-            respuesta.put("statusCode",HttpStatus.INTERNAL_SERVER_ERROR.value());
-
-
-            response.getWriter().write(new ObjectMapper().writeValueAsString(respuesta));
-            response.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
-            response.setContentType(TokenJwtConfig.CONTENT_TYPE);
+        } catch (Exception ex) {
+            log.error("Error en validación de token: {}", ex.getMessage());
+            reject(response, ERROR_TOKEN_INVALIDO + ex.getMessage(), HttpStatus.UNAUTHORIZED);
         }
     }
 
-    private Boolean isTokenExpired(Date exp) {
-        Date currentDate = new Date();
-        return exp.before(currentDate);
+    private Map<String, Object> consultarUsuarioPorCorreo(String correo, String tokenHeader) {
+        String url = urlPropietarios + PATH_CONSULTAR_USUARIO;
+        Map<String, String> headers = Map.of(HttpHeaders.AUTHORIZATION, tokenHeader);
+
+        Map<String, Object> response = loginClient.sendRequest(
+                url.replace("{correo}", correo), HttpMethod.GET, null, headers
+        );
+
+        if (response == null || ((Number) response.get(FIELD_CODIGO)).intValue() != HTTP_OK) {
+            throw new TokenInvalidoException(ERROR_CONSULTA_USUARIO + correo);
+        }
+
+        return (Map<String, Object>) response.get(FIELD_RESPUESTA);
     }
 
+    private boolean isTokenExpired(Date exp) {
+        return exp.before(new Date());
+    }
 
-
+    private void reject(HttpServletResponse response, String mensaje, HttpStatus status) throws IOException {
+        ResponseDTO error = ResponseDTO.builder()
+                .mensaje(mensaje)
+                .codigo(status.value())
+                .build();
+        response.setStatus(status.value());
+        response.setContentType("application/json");
+        response.getWriter().write(new ObjectMapper().writeValueAsString(error));
+    }
 }

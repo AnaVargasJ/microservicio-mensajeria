@@ -4,5 +4,5 @@ import jakarta.servlet.http.HttpServletRequest;
 
 public interface IEnviarMensajeHandler {
 
-    void enviar(HttpServletRequest request, Long idUsuario);
+    void enviar(HttpServletRequest request, Long idUsuario, String mensaje);
 }
